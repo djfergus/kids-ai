@@ -1,5 +1,6 @@
+use crossterm::cursor::MoveToColumn;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
-use crossterm::terminal;
+use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::ExecutableCommand;
 use std::io::{self, Write};
 
@@ -28,8 +29,10 @@ pub fn print_thinking() {
 }
 
 pub fn clear_thinking() {
-    print!("\r\x1b[2K");
-    let _ = io::stdout().flush();
+    let mut stdout = io::stdout();
+    let _ = stdout.execute(MoveToColumn(0));
+    let _ = stdout.execute(Clear(ClearType::CurrentLine));
+    let _ = stdout.flush();
 }
 
 pub fn print_ai_prefix() {
@@ -64,9 +67,7 @@ pub fn print_goodbye(child_name: Option<&str>) {
 }
 
 pub fn prompt_string() -> String {
-    let green = "\x1b[32m";
-    let reset = "\x1b[0m";
-    format!("{green}You> {reset}")
+    format!("{}You> {}", SetForegroundColor(Color::Green), ResetColor)
 }
 
 /// Handles word-wrapping of streamed tokens to fit the terminal width.
@@ -109,8 +110,9 @@ impl WordWrapper {
                 }
             }
         }
-        // Flush if we have a long word that exceeds width on its own
-        if self.col + self.word_buf.len() > self.width && self.word_buf.len() >= self.width {
+        // Flush if we have a long word that fills the terminal on its own
+        let buf_len = self.word_buf.chars().count();
+        if self.col + buf_len > self.width && buf_len >= self.width {
             self.flush_word();
         }
         let _ = io::stdout().flush();
@@ -127,7 +129,7 @@ impl WordWrapper {
             return;
         }
 
-        let word_len = self.word_buf.len();
+        let word_len = self.word_buf.chars().count();
 
         // Wrap to next line if this word won't fit
         if self.col > 0 && self.col + word_len > self.width {

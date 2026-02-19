@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -8,7 +10,7 @@ pub struct Message {
 
 pub struct ChatHistory {
     system_prompt: String,
-    messages: Vec<Message>,
+    messages: VecDeque<Message>,
     max_history: usize,
 }
 
@@ -16,13 +18,13 @@ impl ChatHistory {
     pub fn new(system_prompt: String, max_history: usize) -> Self {
         Self {
             system_prompt,
-            messages: Vec::new(),
+            messages: VecDeque::new(),
             max_history,
         }
     }
 
     pub fn add_user_message(&mut self, content: &str) {
-        self.messages.push(Message {
+        self.messages.push_back(Message {
             role: "user".to_string(),
             content: content.to_string(),
         });
@@ -30,7 +32,7 @@ impl ChatHistory {
     }
 
     pub fn add_assistant_message(&mut self, content: &str) {
-        self.messages.push(Message {
+        self.messages.push_back(Message {
             role: "assistant".to_string(),
             content: content.to_string(),
         });
@@ -44,13 +46,17 @@ impl ChatHistory {
             role: "system".to_string(),
             content: self.system_prompt.clone(),
         });
-        msgs.extend(self.messages.clone());
+        msgs.extend(self.messages.iter().cloned());
         msgs
     }
 
     fn trim(&mut self) {
         while self.messages.len() > self.max_history {
-            self.messages.remove(0);
+            self.messages.pop_front();
+        }
+        // Ensure history never starts with an assistant message (no orphaned response).
+        if self.messages.front().map(|m| m.role == "assistant").unwrap_or(false) {
+            self.messages.pop_front();
         }
     }
 }

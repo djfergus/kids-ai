@@ -8,8 +8,6 @@ mod ui;
 use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -25,10 +23,7 @@ async fn run() -> Result<()> {
     let system_prompt =
         system_prompt::build_system_prompt(config.child_name.as_deref());
 
-    let chat = Arc::new(Mutex::new(chat::ChatHistory::new(
-        system_prompt,
-        config.max_history,
-    )));
+    let mut chat = chat::ChatHistory::new(system_prompt, config.max_history);
 
     let openrouter = openrouter::OpenRouterClient::new(
         config.openrouter_api_key,
@@ -46,6 +41,7 @@ async fn run() -> Result<()> {
 
     let mut editor = DefaultEditor::new()?;
     let prompt = ui::prompt_string();
+    let mut telegram_tasks = Vec::new();
 
     loop {
         let input = editor.readline(&prompt);
@@ -68,19 +64,11 @@ async fn run() -> Result<()> {
 
                 let _ = editor.add_history_entry(trimmed);
 
-                // Add user message to history
-                {
-                    let mut chat = chat.lock().await;
-                    chat.add_user_message(trimmed);
-                }
+                chat.add_user_message(trimmed);
 
                 ui::print_thinking();
 
-                // Build API messages
-                let api_messages = {
-                    let chat = chat.lock().await;
-                    chat.build_api_messages()
-                };
+                let api_messages = chat.build_api_messages();
 
                 let mut first_token = true;
                 let mut wrapper = ui::WordWrapper::new(4); // "AI> " = 4 cols
@@ -109,14 +97,9 @@ async fn run() -> Result<()> {
                             ui::print_ai_done();
                         }
 
-                        // Add assistant message to history
-                        {
-                            let mut chat = chat.lock().await;
-                            chat.add_assistant_message(&response);
-                        }
+                        chat.add_assistant_message(&response);
 
-                        // Fire-and-forget Telegram notification
-                        telegram.notify(trimmed, &response);
+                        telegram_tasks.push(telegram.notify(trimmed, &response));
                     }
                     Err(e) => {
                         if !first_token {
@@ -148,8 +131,10 @@ async fn run() -> Result<()> {
         }
     }
 
-    // Give background Telegram tasks a moment to complete
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    // Wait for all background Telegram tasks to complete before exiting.
+    for task in telegram_tasks {
+        let _ = task.await;
+    }
 
     Ok(())
 }
