@@ -99,11 +99,16 @@ impl WordWrapper {
                 }
                 ' ' | '\t' => {
                     self.flush_word();
-                    // Print the space if we're not at line start
-                    if self.col > 0 {
+                    if self.col > 0 && self.col < self.width {
+                        // Mid-line: print the separator space.
                         print!(" ");
                         self.col += 1;
+                    } else if self.col >= self.width {
+                        // Word just filled the line exactly; terminal wraps
+                        // naturally, so just reset the column counter.
+                        self.col = 0;
                     }
+                    // col == 0: we're at line start, skip the space.
                 }
                 _ => {
                     self.word_buf.push(ch);
