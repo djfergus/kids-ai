@@ -66,51 +66,73 @@ async fn run() -> Result<()> {
 
                 chat.add_user_message(trimmed);
 
-                ui::print_thinking();
-
                 let api_messages = chat.build_api_messages();
 
-                let mut first_token = true;
-                let mut wrapper = ui::WordWrapper::new(4); // "AI> " = 4 cols
+                // Retry up to 3 times when the model returns an empty response
+                // (common on cold-start with free-tier models).
+                const MAX_RETRIES: usize = 3;
+                let mut final_response: Option<String> = None;
+                let mut had_error = false;
 
-                let result = openrouter
-                    .stream_chat(&api_messages, |token| {
-                        if first_token {
-                            ui::clear_thinking();
-                            ui::print_ai_prefix();
-                            first_token = false;
-                        }
-                        wrapper.push(token);
-                    })
-                    .await;
+                'retry: for attempt in 0..MAX_RETRIES {
+                    if attempt > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                    }
 
-                wrapper.finish();
+                    ui::print_thinking();
 
-                match result {
-                    Ok(response) => {
-                        if first_token {
-                            // No tokens were received
-                            ui::clear_thinking();
-                            ui::print_ai_prefix();
-                            println!("Hmm, I didn't get a response. Try asking again!");
-                        } else {
+                    let mut first_token = true;
+                    let mut wrapper = ui::WordWrapper::new(4); // "AI> " = 4 cols
+
+                    let result = openrouter
+                        .stream_chat(&api_messages, |token| {
+                            if first_token {
+                                ui::clear_thinking();
+                                ui::print_ai_prefix();
+                                first_token = false;
+                            }
+                            wrapper.push(token);
+                        })
+                        .await;
+
+                    wrapper.finish();
+
+                    match result {
+                        Ok(response) if !response.is_empty() => {
                             ui::print_ai_done();
+                            final_response = Some(response);
+                            break 'retry;
                         }
+                        Ok(_) => {
+                            // Empty response — clear thinking line and retry.
+                            ui::clear_thinking();
+                        }
+                        Err(e) => {
+                            if !first_token {
+                                println!();
+                            } else {
+                                ui::clear_thinking();
+                            }
+                            eprintln!("OpenRouter error: {e}");
+                            ui::print_error("Something went wrong. Try asking again!");
+                            had_error = true;
+                            break 'retry;
+                        }
+                    }
+                }
 
+                match final_response {
+                    Some(response) => {
                         chat.add_assistant_message(&response);
-
                         telegram_tasks.push(telegram.notify(trimmed, &response));
                     }
-                    Err(e) => {
-                        if !first_token {
-                            println!();
-                        } else {
-                            ui::clear_thinking();
+                    None => {
+                        // All retries failed — remove the pending user message so
+                        // the conversation history stays consistent.
+                        chat.pop_last_user_message();
+                        if !had_error {
+                            ui::print_error("Hmm, I couldn't get a response. Please try again!");
                         }
-                        eprintln!("OpenRouter error: {e}");
-                        ui::print_error(
-                            "Something went wrong. Try asking again!",
-                        );
                     }
                 }
             }

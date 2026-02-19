@@ -50,6 +50,13 @@ impl ChatHistory {
         msgs
     }
 
+    /// Remove the last message if it is a user message (used to clean up a failed turn).
+    pub fn pop_last_user_message(&mut self) {
+        if self.messages.back().map(|m| m.role == "user").unwrap_or(false) {
+            self.messages.pop_back();
+        }
+    }
+
     fn trim(&mut self) {
         while self.messages.len() > self.max_history {
             self.messages.pop_front();
